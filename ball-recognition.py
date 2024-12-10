@@ -14,7 +14,7 @@ import pygame
 
 cap=cv2.VideoCapture(0) #カメラから入力
 
-cv2.namedWindow('video', cv2.WINDOW_NORMAL)
+cv2.namedWindow('video')
 last_radius = 0#前回フレームの半径
 frame_ms =25 #フレーム表示時間 ミリ秒
 
@@ -51,10 +51,10 @@ def getMask(l, u):
     return cv2.bitwise_and(frame,frame, mask= mask)
 
 # 輪郭取得
-def getContours(img,t,r):
+def getContours(img, threshold, min_radius):
     global last_radius
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    ret, thresh = cv2.threshold(gray, t, 255, cv2.THRESH_BINARY)
+    ret, thresh = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)
 
     #cv2.findContours の戻り値がOpenCVのバージョンによって異なる
     contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -68,33 +68,61 @@ def getContours(img,t,r):
     contours.sort(key=cv2.contourArea, reverse=True)
 
     #一つ以上検出
-    if len(contours) > 0:
-        #最大の円のみ描画
-        # 最小外接円を描く
-        (x,y), radius = cv2.minEnclosingCircle(contours[0])
-        center = (int(x),int(y))
-        #radius = int(radius)
-        delta=radius-last_radius
-        last_radius=radius
-            
-        radius_frame = cv2.circle(frame,center,int(radius),(0,255,0),10)
-        #変化が殆ど無い場合または大きすぎる場合は表示しない
-        if 1<abs(delta) and abs(delta)<10:
-            #座標をウィンドウに表示
-            cv2.putText(frame, str(center), [10,50], cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
-            #半径変化率をウィンドウに表示
-            cv2.putText(frame, str(delta), [10,100], cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
-            print("delta:",delta)
-        
-        if (delta>5):
-            #mp3を再生
-            # 再生
-            pygame.mixer.music.play()
-            # 再生終了まで待機
-            while pygame.mixer.music.get_busy():
-                pygame.time.Clock().tick(60)
+    if len(contours) > 0 and len(contours[0]) >= 5:
+        try:
+            ellipse = cv2.fitEllipse(contours[0])
+            # 中心座標のNaNチェックを追加
+            if not np.isnan(ellipse[0][0]) and not np.isnan(ellipse[0][1]):
+                center = (int(ellipse[0][0]), int(ellipse[0][1]))
+                axes = (int(ellipse[1][0]/2), int(ellipse[1][1]/2))
+                angle = int(ellipse[2])
+                # 扁平率を計算（長軸/短軸）
+                flatness = axes[0] / (axes[1]+0.01)
+                
+                # 平均半径を計算
+                radius = (axes[0] + axes[1]) / 2
+                delta = radius - last_radius
+                last_radius = radius
+                
+                # 楕円を描画
+                radius_frame = cv2.ellipse(frame, center, axes, angle, 0, 360, (0,255,0), 10)
+                #変化が殆ど無い場合または大きすぎる場合は表示しない
+                #if 1 < abs(delta) and abs(delta) < 10:
+                #座標をウィンドウに表示
+                cv2.putText(frame, f"Center: {center}", [10,50], cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
+                #半径変化率をウィンドウに表示
+                cv2.putText(frame, f"Delta: {delta:.2f}", [10,100], cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
+                # 扁平率を表示
+                cv2.putText(frame, f"Flatness: {flatness:.2f}", [10,150], cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
+                focus = center[0]-win_width/2>0
+                print(f"delta: {delta:.2f}, x-win_width/2: {focus}")
 
-        return radius_frame
+                '''
+                if delta<0:
+                    if focus>0:
+                        robot.forward(speed=abs(delta)/100, curve_right = abs(focus))
+                    else:
+                        robot.forward(speed=abs(delta)/100, curve_left = abs(focus))
+                else:
+                    if focus>0:
+                        robot.backward(speed=abs(delta)/100, curve_right = abs(focus))
+                    else:
+                        robot.backward(speed=abs(delta)/100, curve_left = abs(focus))
+                '''
+                
+                if (delta>5):
+                    #mp3を再生
+                    # 再生
+                    pygame.mixer.music.play()
+                    # 再生終了まで待機
+                    while pygame.mixer.music.get_busy():
+                        pygame.time.Clock().tick(60)
+
+                return radius_frame
+            else:
+                return img  # NaNが検出された場合は元の画像を返す
+        except:
+            return img  # エラーが発生した場合は元の画像を返す
     else:
         return frame
 
